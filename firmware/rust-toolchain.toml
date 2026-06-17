@@ -1,6 +1,10 @@
 [toolchain]
-# Свежий тулчейн "esp" (Rust ≥1.85): edition2024-зависимости и новые крейты
-# собираются без пинов версий. Проблему знаковости c_char в esp-idf-svc 0.49.1
-# решаем точечным патчем крейта (см. [patch.crates-io] в Cargo.toml и
-# vendor/esp-idf-svc), а не откатом тулчейна.
-channel = "esp"
+# Нужен Rust из окна 1.85–1.87:
+#   • >=1.85 — для edition2024 (свежие транзитивные зависимости);
+#   • <1.88  — esp32-nimble 0.8.2 использует #![feature(inline_const_pat)],
+#              удалённую в 1.88.0 (свежий "esp"-тулчейн уже >=1.88 — не годится).
+# c_char (esp-idf-svc 0.49.1) решён патчем vendor/esp-idf-svc, не тулчейном.
+# Для ESP32-C3 (RISC-V) стоковый nightly собирает riscv32imc-esp-espidf через
+# build-std; качается с static.rust-lang.org. 2025-03-15 — это цикл Rust 1.87.
+channel = "nightly-2025-03-15"
+components = ["rust-src", "rustfmt", "clippy"]

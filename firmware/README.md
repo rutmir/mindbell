@@ -114,6 +114,12 @@ cargo build --release
 `Cargo.toml`. Тулчейн при этом — обычный свежий `esp`. Если когда-нибудь поднимем
 `esp32-nimble`/`esp-idf-svc` до актуальных версий — патч и `vendor/` можно убрать.
 
+**`feature has been removed: inline_const_pat` / `const blocks cannot be used as patterns` в `esp32-nimble`**
+`esp32-nimble 0.8.2` использует фичу `inline_const_pat`, удалённую в Rust 1.88.
+Поэтому тулчейн запинен на nightly **эпохи 1.87** (окно 1.85–1.87:
+`≥1.85` ради edition2024, `<1.88` ради этой фичи) в `rust-toolchain.toml`.
+`rustup` подтянет его сам. Свежий канал `esp` (уже ≥1.88) здесь не подходит.
+
 **`Connection timed out` при скачивании с `github.com` / `No module named pip`**
 ESP-IDF тянет тулчейн с GitHub-релизов; если они недоступны — переключите на
 зеркало Espressif и доустановите Python-venv (Ubuntu):
