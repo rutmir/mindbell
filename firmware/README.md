@@ -91,6 +91,30 @@ espflash flash --monitor --port /dev/ttyACM0 target/riscv32imc-esp-espidf/releas
 > заряжается аккумулятор (TP4056), как правило **не** соединён с USB-портом
 > самого ESP32 — это разные разъёмы/линии. Прошивайте через USB-порт платы.
 
+## Если сборка падает
+
+**`ninja: error: '.../out/partitions.csv' ... missing and no known rule to make it`**
+esp-idf-sys ищет кастомную таблицу разделов в своём каталоге сборки
+(`target/.../out`), а не в корне крейта. Файл туда докопирует glob-механизм —
+он уже прописан в `.cargo/config.toml` (`ESP_IDF_GLOB_PARTITION_BASE` +
+`ESP_IDF_GLOB_PARTITION_CSV`). Если правили конфиг — очистите кэш C-проекта и
+пересоберите:
+
+```bash
+rm -rf target/riscv32imc-esp-espidf/*/build/esp-idf-sys-*
+cargo build --release
+```
+
+**`Connection timed out` при скачивании с `github.com` / `No module named pip`**
+ESP-IDF тянет тулчейн с GitHub-релизов; если они недоступны — переключите на
+зеркало Espressif и доустановите Python-venv (Ubuntu):
+
+```bash
+sudo apt install -y python3-venv python3-pip python3-full
+export IDF_GITHUB_ASSETS="dl.espressif.com/github_assets"
+cargo build --release
+```
+
 ## Проверка после прошивки
 
 1. В мониторе видно `cold boot` → `time not set -> config mode for sync` и

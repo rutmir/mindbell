@@ -13,3 +13,11 @@ build-std = ["std", "panic_abort"]
 MCU = "esp32c3"
 # Версия ESP-IDF, которую подтянет embuild. v5.2.x — стабильная и проверенная.
 ESP_IDF_VERSION = "v5.2.2"
+
+# Кастомная таблица разделов (partitions.csv, factory 3 МБ под крупный BLE-образ).
+# esp-idf-sys резолвит CONFIG_PARTITION_TABLE_CUSTOM_FILENAME относительно своего
+# каталога сборки (target/.../out), а НЕ корня крейта, поэтому файл туда надо явно
+# докопировать через glob-механизм esp-idf-sys (см. BUILD-OPTIONS.md). База — корень
+# крейта (firmware/), относительно расположения этого .cargo/config.toml.
+ESP_IDF_GLOB_PARTITION_BASE = { value = ".", relative = true }
+ESP_IDF_GLOB_PARTITION_CSV = "partitions.csv"
