@@ -43,10 +43,17 @@ const BUTTON_GPIO_NUM: u32 = 4;
 /// нажатий в кармане), мс.
 const LONG_PRESS_MS: u32 = 2_000;
 
-/// Параметры вибросигнала.
-const BUZZ_PULSE_MS: u32 = 180;
-const BUZZ_GAP_MS: u32 = 120;
-const BUZZ_PULSES: u32 = 2;
+/// Сигнал-напоминание (по таймеру): 3 импульса по 300 мс с паузами 700 мс
+/// между ними.
+const REMINDER_PULSES: u32 = 3;
+const REMINDER_PULSE_MS: u32 = 300;
+const REMINDER_GAP_MS: u32 = 700;
+
+/// Короткое виброподтверждение (вход в режим настройки) — намеренно отличается
+/// от напоминания, чтобы их не путать: 2 коротких импульса.
+const CONFIRM_PULSES: u32 = 2;
+const CONFIRM_PULSE_MS: u32 = 180;
+const CONFIRM_GAP_MS: u32 = 120;
 
 /// Имя устройства в BLE-рекламе.
 const DEVICE_NAME: &str = "MindBell";
@@ -94,7 +101,7 @@ fn main() -> anyhow::Result<()> {
         Wake::Timer => {
             // Проснулись ровно к слоту — вибрируем.
             log::info!("wake: timer -> buzz");
-            buzz(&mut motor);
+            buzz(&mut motor, REMINDER_PULSES, REMINDER_PULSE_MS, REMINDER_GAP_MS);
         }
         Wake::Button => {
             // Проснулись по кнопке, но входим в настройку только если её реально
@@ -108,7 +115,7 @@ fn main() -> anyhow::Result<()> {
             }
             if held >= LONG_PRESS_MS {
                 log::info!("long press -> config mode");
-                buzz(&mut motor); // виброподтверждение «поймал»
+                buzz(&mut motor, CONFIRM_PULSES, CONFIRM_PULSE_MS, CONFIRM_GAP_MS); // «поймал»
                 run_config_mode(&mut nvs)?;
             } else {
                 log::info!("short press ({} ms) ignored", held);
@@ -120,7 +127,7 @@ fn main() -> anyhow::Result<()> {
             log::info!("cold boot");
             if now_local_sec().is_none() {
                 log::info!("time not set -> config mode for sync");
-                buzz(&mut motor);
+                buzz(&mut motor, CONFIRM_PULSES, CONFIRM_PULSE_MS, CONFIRM_GAP_MS);
                 run_config_mode(&mut nvs)?;
             }
         }
@@ -138,17 +145,20 @@ fn main() -> anyhow::Result<()> {
     enter_deep_sleep(next);
 }
 
-/// Даёт настроенную серию виброимпульсов.
-fn buzz<P, MODE>(motor: &mut PinDriver<'_, P, MODE>)
+/// Серия виброимпульсов: `pulses` импульсов по `on_ms` мс, паузы `gap_ms` мс
+/// ставятся ТОЛЬКО между импульсами (после последнего паузы нет).
+fn buzz<P, MODE>(motor: &mut PinDriver<'_, P, MODE>, pulses: u32, on_ms: u32, gap_ms: u32)
 where
     P: esp_idf_svc::hal::gpio::Pin,
     MODE: esp_idf_svc::hal::gpio::OutputMode,
 {
-    for _ in 0..BUZZ_PULSES {
+    for i in 0..pulses {
         let _ = motor.set_high();
-        FreeRtos::delay_ms(BUZZ_PULSE_MS);
+        FreeRtos::delay_ms(on_ms);
         let _ = motor.set_low();
-        FreeRtos::delay_ms(BUZZ_GAP_MS);
+        if i + 1 < pulses {
+            FreeRtos::delay_ms(gap_ms);
+        }
     }
 }
 
@@ -240,7 +250,7 @@ fn run_config_mode(nvs: &mut EspNvs<NvsDefault>) -> anyhow::Result<()> {
 
     let adv = ble.get_advertising();
     adv.lock()
-        .set_data(BLEAdvertisementData::new().name(DEVICE_NAME).add_service_uuid(&SERVICE_UUID))?;
+        .set_data(BLEAdvertisementData::new().name(DEVICE_NAME).add_service_uuid(SERVICE_UUID))?;
     adv.lock().start()?;
     log::info!("advertising as '{}'", DEVICE_NAME);
 
