@@ -1,14 +1,6 @@
 [toolchain]
-# Для ESP32-C3 (RISC-V) форк "esp" НЕ обязателен: цель riscv32imc-esp-espidf
-# собирается стоковым nightly через build-std (rust-src).
-#
-# Пин на nightly ≤1.83: в Rust 1.84 поменяли знаковость core::ffi::c_char
-# (на RISC-V стал u8), а esp-idf-svc 0.49.1 / esp32-nimble 0.8.2 захардкодили i8
-# в tls.rs/cstr.rs → ошибки "*const u8 vs *const i8". До 1.84 c_char = i8 и всё
-# собирается без правок крейтов. nightly-2024-10-01 — конец цикла 1.83.
-#
-# Альтернатива (если хочется остаться на "esp"): откатить его на ту же эпоху —
-#   espup install --toolchain-version 1.83.0.0
-# и вернуть сюда channel = "esp".
-channel = "nightly-2024-10-01"
-components = ["rust-src", "rustfmt", "clippy"]
+# Свежий тулчейн "esp" (Rust ≥1.85): edition2024-зависимости и новые крейты
+# собираются без пинов версий. Проблему знаковости c_char в esp-idf-svc 0.49.1
+# решаем точечным патчем крейта (см. [patch.crates-io] в Cargo.toml и
+# vendor/esp-idf-svc), а не откатом тулчейна.
+channel = "esp"

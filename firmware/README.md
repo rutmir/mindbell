@@ -107,10 +107,12 @@ cargo build --release
 
 **`mismatched types ... expected *const u8, found *const i8` в `esp-idf-svc`/`tls.rs`/`cstr.rs`**
 Знаковость `core::ffi::c_char` поменялась в Rust 1.84 (на RISC-V стал `u8`), а
-`esp-idf-svc 0.49.1` / `esp32-nimble 0.8.2` захардкодили `i8`. Поэтому тулчейн
-запинен на `nightly-2024-10-01` (Rust 1.83, `c_char = i8`) в `rust-toolchain.toml`
-— `rustup` подтянет его автоматически при сборке. Если хочешь остаться на канале
-`esp`, откати его на ту же эпоху: `espup install --toolchain-version 1.83.0.0`.
+`esp-idf-svc 0.49.1` захардкодил `i8` в `tls.rs`/`cstr.rs` (эти модули
+компилируются всегда, отключить фичами нельзя). Решено точечным патчем: локальная
+копия крейта в `vendor/esp-idf-svc` (та же версия 0.49.1, исправлены только эти
+строки на `core::ffi::c_char`), подключённая через `[patch.crates-io]` в
+`Cargo.toml`. Тулчейн при этом — обычный свежий `esp`. Если когда-нибудь поднимем
+`esp32-nimble`/`esp-idf-svc` до актуальных версий — патч и `vendor/` можно убрать.
 
 **`Connection timed out` при скачивании с `github.com` / `No module named pip`**
 ESP-IDF тянет тулчейн с GitHub-релизов; если они недоступны — переключите на
