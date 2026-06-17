@@ -1,0 +1,20 @@
+# ── BLE (NimBLE) ──────────────────────────────────────────────────────────────
+CONFIG_BT_ENABLED=y
+CONFIG_BT_BLE_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+
+# ── Память / стек ───────────────────────────────────────────────────────────────
+# BLE + std требуют запас стека главной задачи.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=12000
+
+# ── Флеш и таблица разделов ─────────────────────────────────────────────────────
+# Образ с BLE крупный (~1.3 МБ), поэтому своя таблица разделов с большим
+# app-разделом (см. partitions.csv). Под флеш 4 МБ.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ── Brownout ────────────────────────────────────────────────────────────────────
+# Порог пониже, чтобы пусковой ток мотора и просадка LiPo под конец разряда не
+# вызывали ложный сброс. C_bulk на VBAT — основная защита, это страховка.
+CONFIG_ESP_BROWNOUT_DET_LVL_SEL_4=y
