@@ -9,6 +9,14 @@ rustflags = ["--cfg", "espidf_time64"]
 [unstable]
 build-std = ["std", "panic_abort"]
 
+# MSRV-aware резолвер: подбирать версии зависимостей, совместимые с rust-version
+# нашего крейта (см. Cargo.toml). Нужно из-за узкого окна тулчейна 1.85–1.87:
+# esp32-nimble 0.8.2 требует <1.88, а свежие транзитивные крейты (home 0.5.12 и
+# т.п.) требуют >=1.88 — без этого cargo тянет их и падает. С "fallback" он сам
+# берёт версии эпохи нашего MSRV, не требующие 1.88.
+[resolver]
+incompatible-rust-versions = "fallback"
+
 [env]
 MCU = "esp32c3"
 # Версия ESP-IDF, которую подтянет embuild. v5.2.x — стабильная и проверенная.
