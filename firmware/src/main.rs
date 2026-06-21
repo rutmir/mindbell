@@ -43,17 +43,18 @@ const BUTTON_GPIO_NUM: u32 = 4;
 /// нажатий в кармане), мс.
 const LONG_PRESS_MS: u32 = 2_000;
 
-/// Сигнал-напоминание (по таймеру): 3 импульса по 300 мс с паузами 700 мс
+/// Сигнал-напоминание (по таймеру): 2 коротких импульса по 180 мс с паузами 120 мс
 /// между ними.
-const REMINDER_PULSES: u32 = 3;
-const REMINDER_PULSE_MS: u32 = 300;
-const REMINDER_GAP_MS: u32 = 700;
+const REMINDER_PULSES: u32 = 2;
+const REMINDER_PULSE_MS: u32 = 180;
+const REMINDER_GAP_MS: u32 = 120;
+
 
 /// Короткое виброподтверждение (вход в режим настройки) — намеренно отличается
-/// от напоминания, чтобы их не путать: 2 коротких импульса.
-const CONFIRM_PULSES: u32 = 2;
-const CONFIRM_PULSE_MS: u32 = 180;
-const CONFIRM_GAP_MS: u32 = 120;
+/// от напоминания, чтобы их не путать: 1 длинный импульс.
+const CONFIRM_PULSES: u32 = 1;
+const CONFIRM_PULSE_MS: u32 = 300;
+const CONFIRM_GAP_MS: u32 = 700;
 
 /// Имя устройства в BLE-рекламе.
 const DEVICE_NAME: &str = "MindBell";
@@ -91,6 +92,13 @@ fn main() -> anyhow::Result<()> {
     let peripherals = Peripherals::take()?;
     let nvs_part = EspDefaultNvsPartition::take()?;
     let mut nvs = EspNvs::new(nvs_part, "mindbell", true)?;
+
+    // Снимаем «защёлку» пинов, выставленную перед прошлым deep sleep (см.
+    // enter_deep_sleep), иначе ими нельзя управлять после пробуждения.
+    unsafe {
+        sys::gpio_deep_sleep_hold_dis();
+        sys::gpio_hold_dis(BUTTON_GPIO_NUM as sys::gpio_num_t);
+    }
 
     // Мотор: выключен по умолчанию (Rpd подстрахует, но явно тоже).
     let mut motor = PinDriver::output(peripherals.pins.gpio3)?;
@@ -302,6 +310,23 @@ fn wakeup_cause() -> Wake {
 /// на BUTTON_GPIO). Если слота нет — спит до нажатия кнопки.
 fn enter_deep_sleep(next_secs: Option<u32>) -> ! {
     unsafe {
+        // Кнопка GPIO4 будит по низкому уровню (кнопка замыкает на GND). Чтобы
+        // НЕнажатая/«висящая» кнопка не уплывала к 0 и не вызывала ложных
+        // пробуждений в цикле (что выглядит как непрерывное виброподтверждение),
+        // включаем внутренний pull-up и ЗАЩЁЛКИВАЕМ конфигурацию пина на время
+        // сна: на ESP32-C3 без hold pull-up в deep sleep не сохраняется и вход
+        // плавает. С защёлкой на пине стабильная «1», пока кнопку не нажали.
+        sys::gpio_set_direction(
+            BUTTON_GPIO_NUM as sys::gpio_num_t,
+            sys::gpio_mode_t_GPIO_MODE_INPUT,
+        );
+        sys::gpio_set_pull_mode(
+            BUTTON_GPIO_NUM as sys::gpio_num_t,
+            sys::gpio_pull_mode_t_GPIO_PULLUP_ONLY,
+        );
+        sys::gpio_hold_en(BUTTON_GPIO_NUM as sys::gpio_num_t);
+        sys::gpio_deep_sleep_hold_en();
+
         // Пробуждение по кнопке: низкий уровень на BUTTON_GPIO (кнопка на GND).
         sys::esp_deep_sleep_enable_gpio_wakeup(
             1u64 << BUTTON_GPIO_NUM,

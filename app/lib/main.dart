@@ -93,8 +93,9 @@ class _ScanPageState extends State<ScanPage> {
       _toast('Это устройство не поддерживает Bluetooth');
       return false;
     }
-    // 2. Разрешения. На Android 12+ нужны Scan+Connect; на 11 и старше — гео.
-    //    (Должны быть объявлены и в AndroidManifest.xml — см. README.)
+    // 2. Разрешения СНАЧАЛА. Это важно: без BLUETOOTH_CONNECT плагин не может
+    //    узнать состояние адаптера, и adapterState вернёт unknown.
+    //    (Сами разрешения объявлены в AndroidManifest.xml — см. README.)
     final st = await [
       Permission.bluetoothScan,
       Permission.bluetoothConnect,
@@ -108,15 +109,46 @@ class _ScanPageState extends State<ScanPage> {
       _toast('Нет разрешений Bluetooth/геолокации — выдай их в настройках приложения');
       return false;
     }
-    // 3. Адаптер включён?
-    if (FlutterBluePlus.adapterStateNow != BluetoothAdapterState.on) {
-      _toast('Включи Bluetooth');
-      try {
-        await FlutterBluePlus.turnOn(); // Android покажет системный запрос
-      } catch (_) {}
-      if (FlutterBluePlus.adapterStateNow != BluetoothAdapterState.on) return false;
+    // 3. Адаптер включён? adapterStateNow поначалу = unknown (поток ещё не
+    //    выдал значения), поэтому НЕ полагаемся на него синхронно, а ждём
+    //    первое реальное значение из adapterState.
+    final state = await _waitAdapterOn();
+    if (state != BluetoothAdapterState.on) {
+      _toast(state == BluetoothAdapterState.unauthorized
+          ? 'Нет разрешения Bluetooth — выдай его в настройках приложения'
+          : 'Включи Bluetooth и повтори');
+      return false;
     }
     return true;
+  }
+
+  /// Ждёт, пока адаптер перейдёт в `on`. Если выключен — пытается включить
+  /// (Android покажет системный диалог). Возвращает последнее известное
+  /// состояние (или `unknown` по таймауту).
+  Future<BluetoothAdapterState> _waitAdapterOn() async {
+    // первое НЕ-unknown значение
+    BluetoothAdapterState state;
+    try {
+      state = await FlutterBluePlus.adapterState
+          .firstWhere((s) => s != BluetoothAdapterState.unknown)
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {
+      state = FlutterBluePlus.adapterStateNow;
+    }
+    if (state == BluetoothAdapterState.on) return state;
+    if (state == BluetoothAdapterState.off) {
+      try {
+        await FlutterBluePlus.turnOn();
+      } catch (_) {}
+    }
+    try {
+      state = await FlutterBluePlus.adapterState
+          .firstWhere((s) => s == BluetoothAdapterState.on)
+          .timeout(const Duration(seconds: 10));
+    } catch (_) {
+      state = FlutterBluePlus.adapterStateNow;
+    }
+    return state;
   }
 
   Future<void> _startScan() async {
@@ -210,7 +242,12 @@ class _ConfigPageState extends State<ConfigPage> {
 
   Future<void> _connect() async {
     try {
-      await widget.device.connect(timeout: const Duration(seconds: 15));
+      // License.nonprofit — бесплатный тариф flutter_blue_plus 2.x для личного,
+      // образовательного и некоммерческого использования.
+      await widget.device.connect(
+        license: License.nonprofit,
+        timeout: const Duration(seconds: 15),
+      );
       try {
         await widget.device.requestMtu(247); // чтобы JSON влез одним пакетом
       } catch (_) {}
