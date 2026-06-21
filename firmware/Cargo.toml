@@ -16,6 +16,17 @@ opt-level = "s"
 debug = true
 opt-level = "z"
 
+[features]
+default = []
+# Диагностическая сборка: устройство НЕ уходит в deep sleep (USB-Serial-JTAG не
+# отваливается → логи идут непрерывно) и НЕ управляет мотором (убираем пусковой
+# ток/просадку из уравнения). Запуск: `cargo run --release --features diag`.
+diag = []
+# Automatic light sleep: CPU дремлет между событиями, BLE остаётся в эфире.
+# Требует CONFIG_PM_ENABLE=y и CONFIG_FREERTOS_USE_TICKLESS_IDLE=y в sdkconfig.
+# По умолчанию ВЫКЛ — для отладки удобнее непрерывный лог при полном бодрствовании.
+light_sleep = []
+
 [dependencies]
 log = "0.4"
 anyhow = "1"
