@@ -87,6 +87,22 @@ impl Schedule {
         }
         best
     }
+
+    /// Находится ли `now_sec` внутри какого-либо активного диапазона
+    /// (`start ≤ now < end`). Прошивка использует это, чтобы при пробуждении по
+    /// таймеру жужжать ТОЛЬКО внутри рабочего окна, а не на «страховочном»
+    /// пробуждении (когда слотов нет вовсе). Проверка по широкому окну (часы)
+    /// устойчива к дрейфу RTC: проснувшись даже на минуты позже слота, мы всё
+    /// ещё «внутри» диапазона.
+    pub fn in_active_segment(&self, now_sec: u32) -> bool {
+        self.segments.iter().any(|s| {
+            s.enabled
+                && s.interval_min > 0
+                && s.end_min > s.start_min
+                && now_sec >= s.start_min as u32 * 60
+                && now_sec < s.end_min as u32 * 60
+        })
+    }
 }
 
 #[cfg(test)]
@@ -137,6 +153,24 @@ mod tests {
         seg.enabled = false;
         let s = Schedule { segments: vec![seg] };
         assert_eq!(s.seconds_until_next(8 * 3600), None);
+    }
+
+    #[test]
+    fn in_active_segment_window() {
+        let s = Schedule { segments: vec![day(9, 20, 7)] };
+        assert!(s.in_active_segment(9 * 3600)); // ровно начало — внутри
+        assert!(s.in_active_segment(12 * 3600)); // середина
+        assert!(!s.in_active_segment(8 * 3600)); // до начала
+        assert!(!s.in_active_segment(20 * 3600)); // конец исключается
+        assert!(!s.in_active_segment(23 * 3600)); // ночь
+    }
+
+    #[test]
+    fn in_active_segment_ignores_disabled() {
+        let mut seg = day(9, 20, 7);
+        seg.enabled = false;
+        let s = Schedule { segments: vec![seg] };
+        assert!(!s.in_active_segment(12 * 3600));
     }
 
     #[test]

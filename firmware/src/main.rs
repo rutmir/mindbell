@@ -79,6 +79,7 @@ const CHAR_TIME: BleUuid = uuid128!("6d696e64-6265-6c6c-0000-000000000003");
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[derive(Clone, Copy, Debug)]
 enum Wake {
     Timer,
     Button,
@@ -105,11 +106,36 @@ fn main() -> anyhow::Result<()> {
     motor.set_low()?;
 
     let cause = wakeup_cause();
+
+    // Диагностика тактирования/времени. Сравнивая `raw_epoch` соседних
+    // пробуждений с предыдущим «next buzz in N s» из лога, видно реальный дрейф
+    // RTC относительно расчётного интервала (см. README, раздел про логи).
+    {
+        let mut tv = sys::timeval { tv_sec: 0, tv_usec: 0 };
+        unsafe { sys::gettimeofday(&mut tv, core::ptr::null_mut()) };
+        log::info!(
+            "wakeup: cause={:?} raw_epoch={} time_of_day={:?}",
+            cause,
+            tv.tv_sec as i64,
+            now_local_sec(),
+        );
+    }
+
     match cause {
         Wake::Timer => {
-            // Проснулись ровно к слоту — вибрируем.
-            log::info!("wake: timer -> buzz");
-            buzz(&mut motor, REMINDER_PULSES, REMINDER_PULSE_MS, REMINDER_GAP_MS);
+            // Жужжим ТОЛЬКО если реально внутри активного окна расписания. Иначе
+            // это «страховочное» пробуждение (слотов нет / время потеряно) —
+            // молча пересчитываем и снова засыпаем. Проверка по окну (часы), а не
+            // по точному слоту, устойчива к дрейфу RTC: даже проснувшись на
+            // минуты позже, мы всё ещё «внутри» диапазона.
+            match now_local_sec() {
+                Some(now) if load_schedule(&mut nvs).in_active_segment(now) => {
+                    log::info!("wake: timer -> buzz");
+                    buzz(&mut motor, REMINDER_PULSES, REMINDER_PULSE_MS, REMINDER_GAP_MS);
+                }
+                Some(_) => log::info!("wake: timer outside active window — no buzz"),
+                None => log::warn!("wake: timer but time not set — no buzz (need sync)"),
+            }
         }
         Wake::Button => {
             // Проснулись по кнопке, но входим в настройку только если её реально
@@ -310,12 +336,12 @@ fn wakeup_cause() -> Wake {
 /// на BUTTON_GPIO). Если слота нет — спит до нажатия кнопки.
 fn enter_deep_sleep(next_secs: Option<u32>) -> ! {
     unsafe {
-        // Кнопка GPIO4 будит по низкому уровню (кнопка замыкает на GND). Чтобы
-        // НЕнажатая/«висящая» кнопка не уплывала к 0 и не вызывала ложных
-        // пробуждений в цикле (что выглядит как непрерывное виброподтверждение),
-        // включаем внутренний pull-up и ЗАЩЁЛКИВАЕМ конфигурацию пина на время
-        // сна: на ESP32-C3 без hold pull-up в deep sleep не сохраняется и вход
-        // плавает. С защёлкой на пине стабильная «1», пока кнопку не нажали.
+        // Кнопка GPIO4 будит по низкому уровню (кнопка замыкает на GND). На плате
+        // есть внешний pull-up 80 кОм (hardware_notes, распиновка), поэтому в deep
+        // sleep вход НЕ плавает и держать пад через gpio_hold не нужно. Более того,
+        // защёлкивание пада (gpio_hold_en) подозревается в «заморозке» входа, из-за
+        // чего переход в LOW не детектировался и кнопка переставала будить, — hold
+        // НЕ включаем, полагаемся на внешний pull-up.
         sys::gpio_set_direction(
             BUTTON_GPIO_NUM as sys::gpio_num_t,
             sys::gpio_mode_t_GPIO_MODE_INPUT,
@@ -324,19 +350,31 @@ fn enter_deep_sleep(next_secs: Option<u32>) -> ! {
             BUTTON_GPIO_NUM as sys::gpio_num_t,
             sys::gpio_pull_mode_t_GPIO_PULLUP_ONLY,
         );
-        sys::gpio_hold_en(BUTTON_GPIO_NUM as sys::gpio_num_t);
-        sys::gpio_deep_sleep_hold_en();
+
+        // Если кнопку всё ещё держат — ждём отпускания (до 3 с). Иначе уровень LOW
+        // разбудит нас мгновенно сразу после засыпания → бесконечный цикл
+        // wake/sleep (и лишний разряд батареи).
+        let mut held_guard = 0u32;
+        while sys::gpio_get_level(BUTTON_GPIO_NUM as sys::gpio_num_t) == 0 && held_guard < 3_000 {
+            FreeRtos::delay_ms(50);
+            held_guard += 50;
+        }
 
         // Пробуждение по кнопке: низкий уровень на BUTTON_GPIO (кнопка на GND).
         sys::esp_deep_sleep_enable_gpio_wakeup(
             1u64 << BUTTON_GPIO_NUM,
             sys::esp_deepsleep_gpio_wake_up_mode_t_ESP_GPIO_WAKEUP_GPIO_LOW,
         );
-        if let Some(s) = next_secs {
-            let us = (s.max(1) as u64) * 1_000_000;
-            sys::esp_sleep_enable_timer_wakeup(us);
-        }
-        log::info!("entering deep sleep");
+
+        // ВСЕГДА ставим таймер: реальный слот, либо страховочные сутки. Это
+        // защищает от «вечного сна»: даже если слотов нет / время потеряно /
+        // кнопочное пробуждение почему-то не сработало, устройство гарантированно
+        // проснётся, пересчитает расписание и даст шанс синхронизироваться.
+        const FALLBACK_SECS: u32 = 24 * 3600;
+        let sleep_s = next_secs.map(|s| s.max(1)).unwrap_or(FALLBACK_SECS).min(FALLBACK_SECS);
+        sys::esp_sleep_enable_timer_wakeup(sleep_s as u64 * 1_000_000);
+
+        log::info!("entering deep sleep for {} s (gpio+timer armed)", sleep_s);
         sys::esp_deep_sleep_start();
     }
     // esp_deep_sleep_start() не возвращается.

@@ -17,7 +17,7 @@ UUID совпадают с прошивкой (`../firmware/src/main.rs`):
 cd app
 
 # 1) Сгенерировать каркас Android (перезапишет наши файлы шаблоном — вернём их следом)
-flutter create . --platforms=android --project-name mindbell_app
+flutter create . --platforms=android --project-name mindbell
 
 # 2) Вернуть наши pubspec.yaml и lib/main.dart (если flutter create их затёр)
 git checkout -- pubspec.yaml lib/main.dart

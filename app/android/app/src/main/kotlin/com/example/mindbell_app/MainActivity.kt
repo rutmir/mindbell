@@ -1,4 +1,4 @@
-package com.example.mindbell_app
+package pro.roex.mindbell
 
 import io.flutter.embedding.android.FlutterActivity
 
