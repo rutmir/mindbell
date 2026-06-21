@@ -185,8 +185,6 @@ fn log_reset_reason() {
         sys::esp_reset_reason_t_ESP_RST_DEEPSLEEP => "DEEPSLEEP",
         sys::esp_reset_reason_t_ESP_RST_PANIC => "PANIC",
         sys::esp_reset_reason_t_ESP_RST_WDT => "WDT",
-        sys::esp_reset_reason_t_ESP_RST_INT => "INT_WDT",
-        sys::esp_reset_reason_t_ESP_RST_TASK => "TASK_WDT",
         sys::esp_reset_reason_t_ESP_RST_SW => "SW",
         sys::esp_reset_reason_t_ESP_RST_EXT => "EXT",
         sys::esp_reset_reason_t_ESP_RST_USB => "USB",
