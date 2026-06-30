@@ -3,7 +3,7 @@
 // UUID должны совпадать с прошивкой (firmware/src/main.rs):
 //   сервис      6d696e64-6265-6c6c-0000-000000000000
 //   расписание  ...0001  (JSON UTF-8, R/W)
-//   время       ...0003  (u64 LE, локальный epoch, W)
+//   время       ...0003  (W) 10 байт: UTC-epoch u64 LE + смещение зоны i16 LE (мин)
 
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';

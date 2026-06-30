@@ -112,9 +112,15 @@ class _ConfigPageState extends State<ConfigPage> {
     setState(() => _busy = true);
     try {
       final now = DateTime.now();
-      final localEpoch =
-          now.millisecondsSinceEpoch ~/ 1000 + now.timeZoneOffset.inSeconds;
-      final data = ByteData(8)..setUint64(0, localEpoch, Endian.little);
+      // Формат прошивки: 10 байт = UTC-epoch (u64 LE, сек) + смещение зоны
+      // (i16 LE, мин). UTC устройство использует для калибровки дрейфа RTC
+      // (монотонен → устойчив к смене зоны/летнего времени), смещение — для
+      // локального времени суток. millisecondsSinceEpoch уже в UTC.
+      final utcEpoch = now.millisecondsSinceEpoch ~/ 1000;
+      final offsetMin = now.timeZoneOffset.inMinutes;
+      final data = ByteData(10)
+        ..setUint64(0, utcEpoch, Endian.little)
+        ..setInt16(8, offsetMin, Endian.little);
       await _timeChar!.write(data.buffer.asUint8List(), withoutResponse: false);
       _toast('Время выставлено: ${fmtMin(now.hour * 60 + now.minute)} ✓');
     } catch (e) {
