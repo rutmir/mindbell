@@ -87,6 +87,13 @@ const MAX_CAL_STEP_PPM: i64 = 20_000;
 /// Полное ограничение cal_ppm: внутренний RC C3 укладывается в ±5%.
 const MAX_CAL_PPM: i64 = 50_000;
 
+/// После вибросигнала по таймеру слоты ближе этого порога считаем текущим, уже
+/// отработанным слотом (см. Schedule::seconds_until_next_guarded): коррекция
+/// дрейфа может отмотать часы на пару секунд ЗА слот, и без защиты тот же слот
+/// сработал бы повторно. Должен быть меньше минимального периода (60 с при
+/// interval_min = 1), чтобы не проглотить соседний легитимный слот.
+const REBUZZ_GUARD_S: u32 = 30;
+
 // UUID сервиса и характеристик (произвольные 128-бит). Те же должны быть в
 // приложении на Flutter.
 const SERVICE_UUID: BleUuid = uuid128!("6d696e64-6265-6c6c-0000-000000000000");
@@ -159,6 +166,10 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Был ли на этом пробуждении штатный сигнал по таймеру — тогда при пересчёте
+    // расписания текущий слот считаем отработанным (REBUZZ_GUARD_S).
+    let mut buzzed_slot = false;
+
     match cause {
         Wake::Timer => {
             // Жужжим ТОЛЬКО если реально внутри активного окна расписания. Иначе
@@ -170,6 +181,7 @@ fn main() -> anyhow::Result<()> {
                 Some(now) if load_schedule(&mut nvs).in_active_segment(now) => {
                     log::info!("wake: timer -> buzz");
                     buzz(&mut motor, REMINDER_PULSES, REMINDER_PULSE_MS, REMINDER_GAP_MS);
+                    buzzed_slot = true;
                 }
                 Some(_) => log::info!("wake: timer outside active window — no buzz"),
                 None => log::warn!("wake: timer but time not set — no buzz (need sync)"),
@@ -206,15 +218,23 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Перечитываем расписание (режим настройки мог его изменить) и считаем,
-    // когда нас будить.
+    // когда нас будить. Если только что вибрировали — текущий слот отработан.
     let schedule = load_schedule(&mut nvs);
-    let next = now_local_sec().and_then(|now| schedule.seconds_until_next(now));
+    let next = now_local_sec().and_then(|now| {
+        if buzzed_slot {
+            schedule.seconds_until_next_guarded(now, REBUZZ_GUARD_S)
+        } else {
+            schedule.seconds_until_next(now)
+        }
+    });
     match next {
         Some(s) => log::info!("next buzz in {} s", s),
         None => log::warn!("no time/segments — sleeping until button"),
     }
 
-    enter_deep_sleep(next);
+    // cal_ppm перечитываем: режим настройки мог его обновить (on_time_sync).
+    let (cal_ppm, _, _) = load_clkcal(&mut nvs);
+    enter_deep_sleep(next, cal_ppm);
 }
 
 /// Серия виброимпульсов: `pulses` импульсов по `on_ms` мс, паузы `gap_ms` мс
@@ -510,7 +530,11 @@ fn wakeup_cause() -> Wake {
 
 /// Засыпает в deep sleep. Будит таймер (следующий слот) и кнопка (низкий уровень
 /// на BUTTON_GPIO). Если слота нет — спит до нажатия кнопки.
-fn enter_deep_sleep(next_secs: Option<u32>) -> ! {
+///
+/// `cal_ppm` — выученный дрейф часов (см. «Калибровка дрейфа RTC»): длительность
+/// таймера предкомпенсируется, чтобы ПОСЛЕ отмотки часов в
+/// apply_drift_correction проснуться ровно на слоте, а не за пару секунд до него.
+fn enter_deep_sleep(next_secs: Option<u32>, cal_ppm: i32) -> ! {
     unsafe {
         // Кнопка GPIO4 будит по низкому уровню (кнопка замыкает на GND). На плате
         // есть внешний pull-up 80 кОм (hardware_notes, распиновка), поэтому в deep
@@ -548,9 +572,20 @@ fn enter_deep_sleep(next_secs: Option<u32>) -> ! {
         // проснётся, пересчитает расписание и даст шанс синхронизироваться.
         const FALLBACK_SECS: u32 = 24 * 3600;
         let sleep_s = next_secs.map(|s| s.max(1)).unwrap_or(FALLBACK_SECS).min(FALLBACK_SECS);
-        sys::esp_sleep_enable_timer_wakeup(sleep_s as u64 * 1_000_000);
 
-        log::info!("entering deep sleep for {} s (gpio+timer armed)", sleep_s);
+        // Предкомпенсация дрейфа: при cal_ppm > 0 часы спешат, и коррекция после
+        // пробуждения отмотает их назад на sleep·ppm — без компенсации мы бы
+        // проснулись ДО слота (источник дублей сигнала). Спим в «сырых» единицах
+        // дольше: raw = s / (1 − ppm/1e6); тогда скорректированные часы за сон
+        // продвинутся ровно на s. Знаменатель > 0: |cal_ppm| ≤ MAX_CAL_PPM (5%).
+        let sleep_us =
+            (sleep_s as i128 * 1_000_000 * 1_000_000 / (1_000_000 - cal_ppm as i128)) as u64;
+        sys::esp_sleep_enable_timer_wakeup(sleep_us);
+
+        log::info!(
+            "entering deep sleep for {} s (raw {} us, cal_ppm={}, gpio+timer armed)",
+            sleep_s, sleep_us, cal_ppm
+        );
         sys::esp_deep_sleep_start();
     }
     // esp_deep_sleep_start() не возвращается.

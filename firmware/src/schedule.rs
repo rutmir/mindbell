@@ -88,6 +88,20 @@ impl Schedule {
         best
     }
 
+    /// То же, что [`seconds_until_next`], но слоты в пределах `guard_s` секунд
+    /// от `now_sec` считаются текущим, УЖЕ отработанным слотом и пропускаются.
+    ///
+    /// Нужно после вибросигнала по таймеру: из-за коррекции дрейфа RTC
+    /// пробуждение может случиться на пару секунд РАНЬШЕ слота, и без защиты
+    /// планировщик назначил бы тот же слот повторно (дубль сигнала через
+    /// секунду-другую). `guard_s` должен быть меньше минимального периода
+    /// (60 с при `interval_min = 1`), чтобы не проглотить соседний слот.
+    pub fn seconds_until_next_guarded(&self, now_sec: u32, guard_s: u32) -> Option<u32> {
+        // `seconds_until_next` корректно работает и при аргументе чуть больше
+        // 86400 (поиск ведётся на двое суток вперёд).
+        self.seconds_until_next(now_sec + guard_s).map(|d| d + guard_s)
+    }
+
     /// Находится ли `now_sec` внутри какого-либо активного диапазона
     /// (`start ≤ now < end`). Прошивка использует это, чтобы при пробуждении по
     /// таймеру жужжать ТОЛЬКО внутри рабочего окна, а не на «страховочном»
@@ -153,6 +167,35 @@ mod tests {
         seg.enabled = false;
         let s = Schedule { segments: vec![seg] };
         assert_eq!(s.seconds_until_next(8 * 3600), None);
+    }
+
+    #[test]
+    fn guarded_skips_current_slot_on_early_wake() {
+        let s = Schedule { segments: vec![day(9, 20, 7)] };
+        // Проснулись на 2 с раньше слота 09:07 (коррекция дрейфа отмотала часы),
+        // отвибрировали. Без защиты следующим был бы тот же слот через 2 с —
+        // с защитой берём 09:14.
+        let now = 9 * 3600 + 7 * 60 - 2;
+        assert_eq!(s.seconds_until_next(now), Some(2)); // сам дубль
+        assert_eq!(s.seconds_until_next_guarded(now, 30), Some(7 * 60 + 2));
+    }
+
+    #[test]
+    fn guarded_keeps_normal_next_slot() {
+        let s = Schedule { segments: vec![day(9, 20, 7)] };
+        // Проснулись ровно на слоте 09:07 — следующий 09:14, защита ничего не меняет.
+        let now = 9 * 3600 + 7 * 60;
+        assert_eq!(s.seconds_until_next_guarded(now, 30), s.seconds_until_next(now));
+    }
+
+    #[test]
+    fn guarded_wraps_past_midnight() {
+        // Слот у самой полуночи: now + guard уходит за 86400 — поиск на двое
+        // суток вперёд должен это переварить.
+        let s = Schedule { segments: vec![day(9, 24, 7)] };
+        let now = SECONDS_PER_DAY - 2; // 23:59:58, сегодняшние слоты кончились
+        let expected = 2 + 9 * 3600; // завтра 09:00
+        assert_eq!(s.seconds_until_next_guarded(now, 30), Some(expected));
     }
 
     #[test]
