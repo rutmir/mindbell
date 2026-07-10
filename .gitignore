@@ -1,0 +1,29 @@
+# ── ОС / редакторы ───────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo
+*.log
+.idea/
+*.iml
+# .vscode/ коммитим — конфигурация запуска общая для проекта
+
+# ── Claude Code ──────────────────────────────────────────────────────────────
+# Проектные скиллы (.claude/skills/) коммитим, локальные настройки — нет.
+.claude/settings.local.json
+
+# ── Прошивка (Rust / ESP-IDF) ────────────────────────────────────────────────
+# Дублирует firmware/.gitignore, чтобы корневой файл покрывал весь проект.
+# firmware/vendor/ НЕ игнорировать: там патченная копия esp-idf-svc из
+# [patch.crates-io].
+firmware/target/
+firmware/.embuild/
+
+# ── Flutter-приложение ───────────────────────────────────────────────────────
+# Основное — в app/.gitignore и app/android/.gitignore; здесь ключевые каталоги
+# сборки на случай, если вложенные файлы потеряются.
+app/build/
+app/.dart_tool/
+app/android/.gradle/
+app/android/local.properties

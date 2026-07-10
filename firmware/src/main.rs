@@ -118,6 +118,15 @@ const CHAR_TIME: BleUuid = uuid128!("6d696e64-6265-6c6c-0000-000000000003");
 #[link_section = ".rtc.data"]
 static mut CLOCK_CHECKPOINT: i64 = 0;
 
+/// Дробный остаток коррекции дрейфа, ещё не применённый к часам, в микродолях
+/// секунды (1_000_000 = 1 с), всегда в [0, 1_000_000). Часы правятся целыми
+/// секундами; без переноса остатка floor() терял бы до ~1 с на каждом
+/// пробуждении, калибровка компенсировала бы это завышением cal_ppm на ~5–7%,
+/// и между синками сигнал уходил бы от истинного времени на минуты. Живёт в
+/// RTC-памяти в паре с CLOCK_CHECKPOINT; при потере обнуляется — безопасно.
+#[link_section = ".rtc.data"]
+static mut CORR_REMAINDER: i64 = 0;
+
 #[derive(Clone, Copy, Debug)]
 enum Wake {
     Timer,
@@ -346,24 +355,31 @@ fn apply_drift_correction(cal_ppm: i32) {
     if cp == 0 {
         // Нет точки отсчёта (холодный старт/потеря питания): заводим и выходим.
         unsafe { core::ptr::addr_of_mut!(CLOCK_CHECKPOINT).write(now) };
+        unsafe { core::ptr::addr_of_mut!(CORR_REMAINDER).write(0) };
         return;
     }
     let raw_delta = now - cp;
     if raw_delta <= 0 {
         return;
     }
-    // cal_ppm>0 → часы спешат → вычитаем набежавшее (raw_delta·ppm).
-    let corr = (raw_delta as i128 * cal_ppm as i128 / 1_000_000) as i64;
+    // cal_ppm>0 → часы спешат → вычитаем набежавшее (raw_delta·ppm) плюс остаток
+    // с прошлых пробуждений. div/rem_euclid: corr округляется вниз, остаток
+    // всегда в [0, 1e6) и применится позже — суммарная коррекция точная при
+    // любом знаке cal_ppm, ничего не теряется на округлении.
+    let acc = unsafe { core::ptr::addr_of!(CORR_REMAINDER).read() } + raw_delta * cal_ppm as i64;
+    let corr = acc.div_euclid(1_000_000);
+    unsafe { core::ptr::addr_of_mut!(CORR_REMAINDER).write(acc.rem_euclid(1_000_000)) };
     if corr == 0 {
-        // Слишком мало времени, чтобы накопить ≥1 с: НЕ двигаем точку отсчёта,
-        // чтобы поправка накопилась к следующему разу.
+        // Накопили < 1 с: остаток уже перенесён в CORR_REMAINDER, точку отсчёта
+        // двигаем (скорректированные часы == сырые).
+        unsafe { core::ptr::addr_of_mut!(CLOCK_CHECKPOINT).write(now) };
         return;
     }
     let corrected = now - corr;
     let tv2 = sys::timeval { tv_sec: corrected as sys::time_t, tv_usec: tv.tv_usec };
     unsafe { sys::settimeofday(&tv2, core::ptr::null()) };
     unsafe { core::ptr::addr_of_mut!(CLOCK_CHECKPOINT).write(corrected) };
-    log::info!("drift corr: raw_delta={}s cal_ppm={} -> -{}s", raw_delta, cal_ppm, corr);
+    log::info!("drift corr: raw_delta={}s cal_ppm={} -> clock -= {}s", raw_delta, cal_ppm, corr);
 }
 
 /// Часть A. Применяет синхронизацию (UTC + смещение зоны) и калибрует дрейф.
@@ -404,10 +420,12 @@ fn on_time_sync(nvs: &mut EspNvs<NvsDefault>, utc_epoch: u64, offset_min: i16) {
         }
     }
 
-    // Ставим локальное время и заводим от него точку отсчёта коррекции.
+    // Ставим локальное время и заводим от него точку отсчёта коррекции;
+    // недоприменённый остаток относился к старой точке — сбрасываем.
     let new_local = utc + (offset_min as i64) * 60;
     set_local_time(new_local.max(0) as u64);
     unsafe { core::ptr::addr_of_mut!(CLOCK_CHECKPOINT).write(new_local) };
+    unsafe { core::ptr::addr_of_mut!(CORR_REMAINDER).write(0) };
     store_clkcal(nvs, cal_ppm, utc, offset_min);
 }
 
@@ -417,6 +435,7 @@ fn on_time_sync(nvs: &mut EspNvs<NvsDefault>, utc_epoch: u64, offset_min: i16) {
 fn on_time_sync_legacy(nvs: &mut EspNvs<NvsDefault>, local_epoch: u64) {
     set_local_time(local_epoch);
     unsafe { core::ptr::addr_of_mut!(CLOCK_CHECKPOINT).write(local_epoch as i64) };
+    unsafe { core::ptr::addr_of_mut!(CORR_REMAINDER).write(0) };
     let (cal_ppm, _, _) = load_clkcal(nvs);
     store_clkcal(nvs, cal_ppm, 0, 0);
     log::warn!("legacy time sync (no tz offset): drift learning paused, set cal_ppm kept");
